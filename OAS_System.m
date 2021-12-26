@@ -16,9 +16,13 @@ classdef OAS_System < handle
         DPMPDF_Efficiency_Type        
         
         % Variables for safety,comfort and efficiency
-        Available_SafetyVar={'LeftLateralOffset','RightLateralOffset','MinTLC_Left','MaxITLC_Left','MinTLC_Right','MaxITLC_Right'}
-        Available_ComfortVar={'MaxLateralAcceleration','MaxLongitudinalAcceleration','MaxYawRate','WARMS','RideComfort_Level'}
-        Available_EfficiencyVar={'MinimumSpeed','Time'}
+        Available_SafetyVar={'MaxLeft_LateralOffset','MeanLeft_LateralOffset','MaxRight_LateralOffset',...
+    'MeanRight_LateralOffset','Range_LateralOffset','MinLeft_TLC','MeanLeft_TLC','MaxLeft_ITLC',...
+    'MeanLeft_ITLC','MinRight_TLC','MeanRight_TLC','MaxRight_ITLC','MeanRight_ITLC'}
+        Available_ComfortVar={'Max_LateralAccel','Mean_LateralAccel','Max_LongidAccel','Mean_LongidAccel',...
+    'Max_LongidDecel','Mean_LongidDecel','Max_YawRate','Mean_YawRate','Max_YawAccel',...
+    'Mean_YawAccel','WARMS','RideComfort_Level'}
+        Available_EfficiencyVar={'Min_Speed','Mean_Speed'}
         Safety_PerceptionVar
         Comfort_PerceptionVar
         Efficiency_PerceptionVar
@@ -517,33 +521,92 @@ function [trajectory_indicators,Available_IndicatorName]=Indicator_Cal(Trajector
 % Trajectory_Indicators is a  column for each trajectory;
 % note: each time updated the available_IndicatorName, Update the
 % properties!
+
 % Safety Var
-Available_SafetyVar={'LeftLateralOffset','RightLateralOffset','MinTLC_Left','MaxITLC_Left','MinTLC_Right','MaxITLC_Right'};
-LeftLateralOffset=prctile(TrajectoryTable.LateralOffset(TrajectoryTable.LateralOffset>0),98);
-if isnan(LeftLateralOffset)
-    LeftLateralOffset=max(TrajectoryTable.LateralOffset);
+% Lateral Offset
+LateralOffset=TrajectoryTable.LateralOffset;
+LeftLatOff=LateralOffset(LateralOffset>=0);
+MaxLeft_LatOff=prctile(LeftLatOff,95);
+MeanLeft_LatOff=mean(LeftLatOff);
+if isnan(MaxLeft_LatOff)
+    MaxLeft_LatOff=0;
+    MeanLeft_LatOff=0;
 end
-RightLateralOffset=prctile(TrajectoryTable.LateralOffset(TrajectoryTable.LateralOffset<0),2);% negative,so pcrtile should be 2
-if isnan(RightLateralOffset)
-    RightLateralOffset=min(TrajectoryTable.LateralOffset);
+RightLatOff=abs(LateralOffset(LateralOffset<0));
+MaxRight_LatOff=prctile(RightLatOff,95);
+MeanRight_LatOff=mean(RightLatOff);
+if isnan(MaxRight_LatOff)
+    MaxRight_LatOff=0;
+    MeanRight_LatOff=0;
 end
-MinTLC_Left=prctile(TrajectoryTable.TLC_Left,2);
-MaxITLC_Left=1./MinTLC_Left;
-MinTLC_Right=abs(prctile(TrajectoryTable.TLC_Right,98)); %TLC_Right is negative
-MaxITLC_Right=1./MinTLC_Right;
-Safety_Ind=[LeftLateralOffset,RightLateralOffset,MinTLC_Left,MaxITLC_Left,MinTLC_Right,MaxITLC_Right];
+Range_LatOff=MaxLeft_LatOff+MaxRight_LatOff;
+Ind_LatOff=[MaxLeft_LatOff,MeanLeft_LatOff,MaxRight_LatOff,MeanRight_LatOff,Range_LatOff];
+VarName_LatOff={'MaxLeft_LateralOffset','MeanLeft_LateralOffset','MaxRight_LateralOffset',...
+    'MeanRight_LateralOffset','Range_LateralOffset'};
+% TLC
+tlcleft=TrajectoryTable.TLC_Left;
+TLC_Left=tlcleft(~isinf(tlcleft));
+MinLeft_TLC=prctile(TLC_Left,5);
+MeanLeft_TLC=mean(TLC_Left);
+ITLC_Left=1./tlcleft;
+MaxLeft_ITLC=prctile(ITLC_Left,95);
+MeanLeft_ITLC=mean(ITLC_Left);
+
+tlcright=abs(TrajectoryTable.TLC_Right);
+TLC_Right=tlcright(~isinf(tlcright));
+MinRight_TLC=prctile(TLC_Right,5);
+MeanRight_TLC=mean(TLC_Right);
+ITLC_Right=1./tlcright;
+MaxRight_ITLC=prctile(ITLC_Right,95);
+MeanRight_ITLC=mean(ITLC_Right);
+TLC_Ind=[MinLeft_TLC,MeanLeft_TLC,MaxLeft_ITLC,MeanLeft_ITLC,MinRight_TLC,MeanRight_TLC,MaxRight_ITLC,MeanRight_ITLC];
+VarName_TLC={'MinLeft_TLC','MeanLeft_TLC','MaxLeft_ITLC',...
+    'MeanLeft_ITLC','MinRight_TLC','MeanRight_TLC','MaxRight_ITLC','MeanRight_ITLC'};
+
+Safety_Ind=[Ind_LatOff,TLC_Ind];
+Available_SafetyVar=[VarName_LatOff,VarName_TLC];
+
 %Comfort Var
-Available_ComfortVar={'MaxLateralAcceleration','MaxLongitudinalAcceleration','MaxYawRate','WARMS','RideComfort_Level'};
-MaxLateralAcceleration=prctile(abs(TrajectoryTable.Ay),98);
-MaxLongitudinalAcceleration=prctile(abs(TrajectoryTable.Ax),99);
-MaxYawRate=prctile(abs(TrajectoryTable.AVz),98);
+% lateral acceleration
+LatAccel=abs(TrajectoryTable.Ay);
+Max_LatAccel=prctile(LatAccel,95);
+Mean_LatAccel=mean(LatAccel); 
+% longidtudinal acceleration
+longidaccel=TrajectoryTable.Ax;
+LongidAccel=longidaccel(longidaccel>0);
+MaxLongitAccel=prctile(LongidAccel,95);
+MeanLongitAccel=mean(LongidAccel);
+LongidDecel=abs(longidaccel(longidaccel<0));
+MaxLongitDecel=prctile(LongidDecel,95);
+MeanLongitDecel=mean(LongidDecel);
+Accel_Ind=[Max_LatAccel,Mean_LatAccel,MaxLongitAccel,MeanLongitAccel,MaxLongitDecel,MeanLongitDecel];
+VarName_Accel={'Max_LateralAccel','Mean_LateralAccel','Max_LongidAccel','Mean_LongidAccel','Max_LongidDecel','Mean_LongidDecel'};
+% Yaw Rate
+ywarate=abs(TrajectoryTable.AVz);
+MaxYawRate=prctile(ywarate,95);
+MeanYawRate=mean(ywarate);
+Yawrate_Ind=[MaxYawRate,MeanYawRate];
+VarName_Yawrate={'Max_YawRate','Mean_YawRate'};
+% yaw accel
+ywaaccel=abs(TrajectoryTable.AAz);
+MaxYawAccel=prctile(ywaaccel,95);
+MeanYawAccel=mean(ywaaccel);
+YawAccel_Ind=[MaxYawAccel,MeanYawAccel];
+VarName_Yawaccel={'Max_YawAccel','Mean_YawAccel'};
+% warms
 [WARMS,RideComfort_Level]=Ridecomfort(TrajectoryTable.Ax,TrajectoryTable.Ay);
-Comfort_Ind=[MaxLateralAcceleration,MaxLongitudinalAcceleration,MaxYawRate,WARMS,RideComfort_Level];
+Warms_ind=[WARMS,RideComfort_Level];
+VarName_Warms={'WARMS','RideComfort_Level'};
+
+Comfort_Ind=[Accel_Ind,Yawrate_Ind,YawAccel_Ind,Warms_ind];
+Available_ComfortVar=[VarName_Accel,VarName_Yawrate,VarName_Yawaccel,VarName_Warms];
+
 % Efficiency Var
-Available_EfficiencyVar={'MinimumSpeed','Time'};
-MinSpeed=prctile(TrajectoryTable.Vx,2);
-Time=TrajectoryTable.t(end)-TrajectoryTable.t(1);
-Efficiency_Ind=[MinSpeed,Time];
+speed=TrajectoryTable.Vx;
+MinSpeed=prctile(speed,5);
+MeanSpeed=mean(speed);
+Efficiency_Ind=[MinSpeed,MeanSpeed];
+Available_EfficiencyVar={'Min_Speed','Mean_Speed'};
 
 trajectory_indicators=[Safety_Ind,Comfort_Ind,Efficiency_Ind];
 Available_IndicatorName=[Available_SafetyVar,Available_ComfortVar,Available_EfficiencyVar];
