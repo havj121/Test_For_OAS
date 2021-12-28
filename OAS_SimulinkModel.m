@@ -9,7 +9,6 @@ classdef OAS_SimulinkModel < handle
         ModelHandle
         % 
         
-        
         % Trajectory Data Information
         % maybe it is ok to send a data table
         TrajectoryData
@@ -18,12 +17,14 @@ classdef OAS_SimulinkModel < handle
         CurveLaneVariableNames
   
         ParamSetHandle
-        
+       
         % Trajectory Indicator and planning parameter lookup table,the No
         % of the planning parameter in the param_ind database.
+        Param_TrajectoryIndTable
         EvaluatedParamBuffer
         EValuatedParam_IndID
         
+        OAS_SystemObj
     end
     properties (Dependent)
         TrajectoryDataTable
@@ -33,20 +34,21 @@ classdef OAS_SimulinkModel < handle
         VehicleBaseLength
     end
     
-    
     events
         EscapedCurve % escape the curve
         EnteredCurve
+        ParameterUpdated
     end
     
     
     methods
-        function obj = OAS_SimulinkModel(ModelName)
+        function obj = OAS_SimulinkModel(OAS_Systemobj)
             %Constructor
             if nargin==1
-                obj.ModelName=ModelName;
+                obj.OAS_SystemObj=OAS_Systemobj;    
             end
-            
+            % add listerner for the oas_system 
+            obj.OAS_SystemObj.addlistener('EvaluatedTrajectoryBufferUpdated',@obj.Update_EvaluatedPlanningParam);
             % register this driver object in the oas_handlemanager
             OAS_handlemanager=OAS_HandleManager.getInstance();
             OAS_handlemanager.register(obj.ID,obj);
@@ -111,6 +113,13 @@ classdef OAS_SimulinkModel < handle
     end
     %===========get and set=================
     methods
+        function set.OAS_SystemObj(obj,OAS_Systemobj)
+            obj.OAS_SystemObj=OAS_Systemobj;
+            % add listener for the OAS system
+            obj.addlistener('EscapedCurve',@obj.OAS_SystemObj.Update_CurrentTrajectory);
+            obj.OAS_SystemObj.addlistener('NextParamSelected',@obj.SetNextParam);
+        end
+        
         function VehicleWidth=get.VehicleWidth(obj)
             modelhandle=Simulink.findBlocks(obj.ModelHandle,'Name','Constant_VehicleWidth');
             VehicleWidth=get_param(modelhandle,'Value');  
@@ -123,7 +132,6 @@ classdef OAS_SimulinkModel < handle
             modelhandle=Simulink.findBlocks(obj.ModelHandle,'Name','Constant_RoadWidth');
             RoadWidth=get_param(modelhandle,'Value');  
         end        
- 
         function trajectorydatatable=get.TrajectoryDataTable(obj)
             if ~isempty(obj.TrajectoryData)
                 trajectorydatatable=array2table(obj.TrajectoryData,'VariableNames',obj.TrajectoryVariableNames);
@@ -138,24 +146,69 @@ classdef OAS_SimulinkModel < handle
                 curvelanedatatable=table;
             end
         end
-        function UpdateParam(obj,PlanningParam)
-            PlanningParam_col=reshape(PlanningParam,[],1);
-%             set(obj.ParamSetHandle,'Value',num2str(PlanningParam_col));
-            assignin('base','InitialPlanningParameter',PlanningParam_col);
-            %note: the name must be consistent with the OAS_Simulink Model method
-            % UpdateParam!!
+     
+        function SetNextParam(obj,src,~)
+            % src: OAS_Systemobj
+           PlanningParam=src.SelectedNextParam;
+           obj.UpdateParam(PlanningParam);
         end
+        function UpdateParam(obj,PlanningParam)
+             PlanningParam_col=reshape(PlanningParam,[],1);
+%             set(obj.ParamSetHandle,'Value',num2str(PlanningParam_col));
+            % assigne value
+            Beta1=Simulink.findBlocks(obj.ModelHandle,'Name','Beta_1');
+            set_param(Beta1,'Value',num2str(PlanningParam_col(1)));
+            Beta2=Simulink.findBlocks(obj.ModelHandle,'Name','Beta_2');
+            set_param(Beta2,'Value',num2str(PlanningParam_col(2)));
+            Beta3=Simulink.findBlocks(obj.ModelHandle,'Name','Beta_3');
+            set_param(Beta3,'Value',num2str(PlanningParam_col(3)));
+            Beta4=Simulink.findBlocks(obj.ModelHandle,'Name','Beta_4');
+            set_param(Beta4,'Value',num2str(PlanningParam_col(4)));
+            Max_LateralAccel=Simulink.findBlocks(obj.ModelHandle,'Name','Max_LateralAcceleration');
+            set_param(Max_LateralAccel,'Value',num2str(PlanningParam_col(5)));
+            Max_LongitudinalAccel=Simulink.findBlocks(obj.ModelHandle,'Name','Max_LongitudinalAcceleration');
+            set_param(Max_LongitudinalAccel,'Value',num2str(PlanningParam_col(6)));
+            Max_LongitudinalDecel=Simulink.findBlocks(obj.ModelHandle,'Name','Max_LongitudinalDeceleration');
+            set_param(Max_LongitudinalDecel,'Value',num2str(PlanningParam_col(7)));
+            Min_Speed=Simulink.findBlocks(obj.ModelHandle,'Name','Min_Speed');
+            set_param(Min_Speed,'Value',num2str(PlanningParam_col(8)));
+            Max_Spped=Simulink.findBlocks(obj.ModelHandle,'Name','Max_Speed');
+            set_param(Max_Spped,'Value',num2str(PlanningParam_col(9)));
+            obj.notify('ParameterUpdated')
+        end
+        
         function Update_EvaluatedPlanningParam(obj,ParamIndID)
-            CurrentParam=evalin('base','InitialPlanningParameter'); 
+            CurrentParam=obj.GetParam();
+            CurrentParam=reshape(CurrentParam,[],1);
                 % note: the name-InitialPlanningParameter must be consistent with the OAS_Simulink Model method
             % UpdateParam!!
             obj.EvaluatedParamBuffer=[obj.EvaluatedParamBuffer;CurrentParam'];
-            if nargin==1 
-                % for the intial, the paramIndID may not in the Param_Ind ID
-                obj.EValuatedParam_IndID=[obj.EValuatedParam_IndID,0];  
-            else
+            if nargin==2 
                 obj.EValuatedParam_IndID=[obj.EValuatedParam_IndID,ParamIndID]; 
             end
+        end
+        
+        function PlanningParam=GetParam(obj)
+            Beta1Block=Simulink.findBlocks(obj.ModelHandle,'Name','Beta_1');
+            Beta1=str2double(get_param(Beta1Block,'Value'));
+            Beta2Block=Simulink.findBlocks(obj.ModelHandle,'Name','Beta_2');
+            Beta2=str2double(get_param(Beta2Block,'Value'));
+            Beta3Block=Simulink.findBlocks(obj.ModelHandle,'Name','Beta_3');
+            Beta3=str2double(get_param(Beta3Block,'Value'));
+            Beta4Block=Simulink.findBlocks(obj.ModelHandle,'Name','Beta_4');
+            Beta4=str2double(get_param(Beta4Block,'Value'));
+            Max_LateralAccelBlock=Simulink.findBlocks(obj.ModelHandle,'Name','Max_LateralAcceleration');
+            Max_LateralAccel=str2double(get_param(Max_LateralAccelBlock,'Value'));
+            Max_LongitudinalAccelBlock=Simulink.findBlocks(obj.ModelHandle,'Name','Max_LongitudinalAcceleration');
+            Max_LongitudinalAccel=str2double(get_param(Max_LongitudinalAccelBlock,'Value'));
+            Max_LongitudinalDecelBlock=Simulink.findBlocks(obj.ModelHandle,'Name','Max_LongitudinalDeceleration');
+            Max_LongitudinalDecel=str2double(get_param(Max_LongitudinalDecelBlock,'Value'));
+            Min_SpeedBlock=Simulink.findBlocks(obj.ModelHandle,'Name','Min_Speed');
+            Min_Speed=str2double(get_param(Min_SpeedBlock,'Value'));
+            Max_SppedBlock=Simulink.findBlocks(obj.ModelHandle,'Name','Max_Speed');
+            Max_Speed=str2double(get_param(Max_SppedBlock,'Value'));
+            PlanningParam=[Beta1;Beta2;Beta3;Beta4;Max_LateralAccel;Max_LongitudinalAccel;Max_LongitudinalDecel;Min_Speed;Max_Speed];
+
         end
     end
     
