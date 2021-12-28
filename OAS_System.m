@@ -30,12 +30,12 @@ classdef OAS_System < handle
         % Initialization 
         % The Lookup Table that contains the planning parameter and the
         % original trajectory indicators database buffer
-        Param_IndBaseFile='E:\Ranwei\tarjectory_tracking\Prescan_scene\Prescan_Carsim\Prescan_Carsim_1110\Parameter_IndicatorAll.csv'  % the filename that contains all indicators
-        NormalisedParam_IndDataBaseTable=[]% Num_Data*Num_Indicators
+        Param_IndBaseFile   %='E:\Ranwei\tarjectory_tracking\Prescan_scene\Prescan_Carsim\Prescan_Carsim_1110\Parameter_IndicatorAll.csv'  % the filename that contains all indicators
+        NormalisedParam_IndDataBaseTable=[]  % Num_Data*Num_Indicators
         VarInParam_IndDataBase
-        IndicatorRange=struct('MaxLateralAcceleration',[0 3],'MaxLongitudinalAcceleration',[0 3],'RightLateralOffset',[0 0.9],'LeftLateralOffset',[0 0.9],'Time',[12 20])% uinis: m/s2,m,s
-        JNDs=struct('MaxLateralAcceleration',0.15,'MaxLongitudinalAcceleration',0.15,'LeftLateralOffset',0.1,...
-            'RightLateralOffset',0.1,'Time',2);% uinis: m/s2,m,s
+        IndicatorRange %=struct('MaxLateralAcceleration',[0 3],'MaxLongitudinalAcceleration',[0 3],'RightLateralOffset',[0 0.9],'LeftLateralOffset',[0 0.9],'Time',[12 20])% uinis: m/s2,m,s
+        JNDs %=struct('MaxLateralAcceleration',0.15,'MaxLongitudinalAcceleration',0.15,'LeftLateralOffset',0.1,...
+            %'RightLateralOffset',0.1,'Time',2);% uinis: m/s2,m,s
         % Rational Coefficient
         Rational_Coefficient_Learning=10;% learning agent rational_coefficient learning rate
 
@@ -45,8 +45,8 @@ classdef OAS_System < handle
         CurrentTrajectoryInd
         LastPreferenceTrajectoryInd=[]
         EvaluationResultBuffer % Comparing Trajectory Group and Evaluation Result
+        SelectedNextParam
         
-        OAS_SimulinkModelobj
         DriverObj 
     end
     properties (Dependent,Access=private)
@@ -68,15 +68,17 @@ classdef OAS_System < handle
     events
         LastPreferenceChanged
         DEMUpdated
+        TrajectoryChanged % curent trajectory ind changed
+        EvaluatedTrajectoryBufferUpdated
     end
     
     % ================Constructor=============================
     methods
         function obj = OAS_System(DriverObj)
             % Initialize the DEM and DPM and the AlternativeTable
-            obj.DriverObj=DriverObj;         
-            obj.OAS_SimulinkModelobj=OAS_SimulinkModel();
-            
+            obj.DriverObj=DriverObj;
+            obj.ID=['OAS_',obj.DriverObj.Name];
+
             % register this driver object in the oas_handlemanager
             OAS_handlemanager=OAS_HandleManager.getInstance();
             OAS_handlemanager.register(obj.ID,obj);
@@ -90,8 +92,7 @@ classdef OAS_System < handle
             % Evaluation is a structor with fields "Type" and "Result".
             % trajectory is a data array with each column is a timeseries
             % array.
-            obj.Update_EvaluatedTrajectory(obj.CurrentTrajectoryInd);
-            obj.OAS_SimulinkModelobj.Update_EvaluatedPlanningParam();
+            obj.Buffer_EvaluatedTrajectory(obj.CurrentTrajectoryInd);
             % Update the PDFs according to the  evaluation
             switch Evaluation.Type
                 case 'Compare'
@@ -100,7 +101,6 @@ classdef OAS_System < handle
                         obj.notify('LastPreferenceChanged');
                         return
                     end
-                    
                     obj.UpdataPDFs_CompareResult(obj.CurrentTrajectoryInd,Evaluation.Result);
                 case 'Fuzzy Linguistic Instruction'
                     sprintf('Fuzzy Linguistic Instruction not available for now!');  
@@ -110,16 +110,16 @@ classdef OAS_System < handle
             obj.notify('DEMUpdated');
         end
         
-        function NextParam_IndID=Select_NextTrajectory(obj,SelectCriteria)
+        function Select_NextTrajectory(obj,SelectCriteria)
             switch SelectCriteria
                 case 'Maximum Expected Information'
                     [NextParam,NextParam_IndID]=obj.Select_ExpectedInformationVolume();
                 case 'Random'
                     [NextParam,NextParam_IndID]=obj.Select_Random();
             end
-            % change the simulink model planning parameter
-            obj.OAS_SimulinkModelobj.UpdateParam(NextParam);
-            obj.OAS_SimulinkModelobj.Update_EvaluatedPlanningParam(NextParam_IndID);
+            obj.SelectedNextParam=NextParam;
+            obj.EValuatedTrajectoryID=NextParam_IndID;
+            obj.notify('NextParamSelected');           
         end
         
     end
@@ -238,9 +238,11 @@ classdef OAS_System < handle
         
         %===============Select Next Trajectory===========
         function [NextParam,max_queryID]=Select_ExpectedInformationVolume(obj) 
-            Available_ID=setdiff((1:size(obj.NormalisedParam_IndDataBaseTable,1)),unique(obj.OAS_SimulinkModelobj.EValuatedParam_IndID));
+            Available_ID=setdiff((1:size(obj.NormalisedParam_IndDataBaseTable,1)),unique(obj.EValuatedTrajectoryID));
+            
             LastPreference_NormalisedTrajectoryInd=obj.Normalize(obj.LastPreferenceTrajectoryInd,obj.Perception_Var);
             Alternative_Query=obj.NormalisedParam_IndDataBaseTable{Available_ID,obj.Perception_Var}-repmat(LastPreference_NormalisedTrajectoryInd',length(Available_ID),1);
+            
             Num_Query=size(Alternative_Query,1);
             DEM_WeightSet=obj.DEMPDF(:,2:end);
             Num_WeightDEM=size(obj.DEMPDF,1);
@@ -261,6 +263,7 @@ classdef OAS_System < handle
             [~,Sum_Prob_Difference]=PDF_NormFunc(Prob_Difference,DEM_WeightSet);
             Expected_Information=Sum_Prob_Difference.*sum_post;
             [~,max_queryID]=max(Expected_Information);
+            
 %             NextNormalisedTrajectory_Ind=obj.NormalisedParam_IndDataBaseTable{max_queryID,obj.Perception_Var};
             NextParam=obj.NormalisedParam_IndDataBaseTable{max_queryID,1:9}';
         end
@@ -389,13 +392,12 @@ classdef OAS_System < handle
             end
         end
         
-        function Update_EvaluatedTrajectory(obj,trajectoryind)
+        function Buffer_EvaluatedTrajectory(obj,trajectoryind)
             obj.EvaluatedTrajectoryIndBuffer=[obj.EvaluatedTrajectoryIndBuffer;trajectoryind];
-            % Update EvaluatedNormalisedTrajectory
-%             NormalisedTrajectoryInd=obj.Normalize(trajectoryind,obj.Perception_Var);
-%             Diff_TrajectoryInd=obj.NormalisedParam_IndDataBaseTable{:,obj.Perception_Var}-repmat(NormalisedTrajectoryInd',size(obj.NormalisedParam_IndDataBaseTable,1),1);
-%             [~,Minimum_No]=min(sum(Diff_TrajectoryInd.^2,2));
-%             obj.EValuatedTrajectoryID=[obj.EValuatedTrajectoryID,Minimum_No];          
+            
+            
+            
+            obj.notify('EvaluatedTrajectoryBufferUpdated');        
         end
         
         function Update_CurrentTrajectory(obj)
@@ -405,6 +407,7 @@ classdef OAS_System < handle
                 Indicators=obj.Indicator_Calculate(TrajectoryTable,perception_var);
                 obj.CurrentTrajectoryInd=Indicators;
             end
+            obj.notify('TrajectoryChanged');
         end
         
         function Update_DriverPerceptionVariables(obj,SafetyVar,ComfortVar,EfficiencyVar)
