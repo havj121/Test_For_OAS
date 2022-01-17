@@ -3,40 +3,34 @@ classdef OAS_SimulinkModel < handle
     %tracking model.
     
     properties
-        ID='SimulinkModel'
+        ID='SimulinkModel' % 
         FilePath
         ModelName
         ModelHandle
-        % 
-        
+        %  
         % Trajectory Data Information
         % maybe it is ok to send a data table
-        TrajectoryData
-        TrajectoryVariableNames
-        CurveLaneData
-        CurveLaneVariableNames
-  
+        ParamEnterCurve % table
+        CurveLaneDataTable
+        TrajectoryDataTable
         ParamSetHandle
-       
         % Trajectory Indicator and planning parameter lookup table,the No
         % of the planning parameter in the param_ind database.
-        Param_TrajectoryIndTable
-        EvaluatedParamBuffer
-        EValuatedParam_IndID
-        
+        Param_TrajectoryDataBase
         OAS_SystemObj
     end
     properties (Dependent)
-        TrajectoryDataTable
-        CurveLaneDataTable
         RoadWidth
         VehicleWidth
         VehicleBaseLength
+        NormalisedParamIndicatorBase
+        IndicatorRangeTable
     end
     
     events
         EscapedCurve % escape the curve
-        EnteredCurve
+        TrajectoryUpdated %used to update the database
+        EnteredCurve % enter the curve
         ParameterUpdated
     end
     
@@ -47,8 +41,10 @@ classdef OAS_SimulinkModel < handle
             if nargin==1
                 obj.OAS_SystemObj=OAS_Systemobj;    
             end
-            % add listerner for the oas_system 
-            obj.OAS_SystemObj.addlistener('EvaluatedTrajectoryBufferUpdated',@obj.Update_EvaluatedPlanningParam);
+            % add listener for the OAS_simulinkobj for EnteredCurve
+            obj.addlistener('EnteredCurve',@obj.UpdateCurveLaneData);
+            obj.addlistener('EscapedCurve',@obj.UpdateTrajectoryData);
+            obj.addlistener('TrajectoryUpdated',@obj.UpdateParamTrajectoryDataBase);
             % register this driver object in the oas_handlemanager
             OAS_handlemanager=OAS_HandleManager.getInstance();
             OAS_handlemanager.register(obj.ID,obj);
@@ -75,9 +71,6 @@ classdef OAS_SimulinkModel < handle
             % register the paramset handle
             paramhandle=Simulink.findBlocks(systemhandle,'Name','Init_PlanningParameter');
             obj.ParamSetHandle=paramhandle;
-            
-            
-
         end
         function Close_Model(obj)
             close_system(obj.ModelHandle);            
@@ -107,51 +100,65 @@ classdef OAS_SimulinkModel < handle
             RangeTLC=150;
             LastDropNumTLC=15;% drop last 20 trajectory data to calculate TLC
             [TLC_Left,TLC_Right]=TCL_Calculate(CurveLaneData,CurveTrajectoryData,obj.VehicleWidth,obj.VehicleBaseLength,RangeTLC,LastDropNumTLC);
-        
-        
         end
     end
-    %===========get and set=================
+    
+    %============ Update Simulink Model Obj============
     methods
-        function set.OAS_SystemObj(obj,OAS_Systemobj)
-            obj.OAS_SystemObj=OAS_Systemobj;
-            % add listener for the OAS system
-            obj.addlistener('EscapedCurve',@obj.OAS_SystemObj.Update_CurrentTrajectory);
-            obj.OAS_SystemObj.addlistener('NextParamSelected',@obj.SetNextParam);
+        function UpdateCurveLaneData(obj,~,ed_curvelanedata)
+            % src: the oas_simulink model obj
+            % ed_curvelanedata:curvelanedatatable
+            obj.CurveLaneDataTable=ed_curvelanedata.Data;
+            % record the param when enter the curve
+            obj.ParamEnterCurve=obj.GetParam();
         end
         
-        function VehicleWidth=get.VehicleWidth(obj)
-            modelhandle=Simulink.findBlocks(obj.ModelHandle,'Name','Constant_VehicleWidth');
-            VehicleWidth=get_param(modelhandle,'Value');  
+        function UpdateTrajectoryData(obj,~,ed_trajectorydata)
+            % src: the oas_simulink model obj
+            % ed_curvelanedata:curvelanedatatable
+            trajectorydata=ed_trajectorydata.Data;
+            % if the trajectory data from the model has no TLCs, calculate
+            % it.
+            if ~all(ismember({'TLC_Left','TLC_Right'},trajectorydata.Properties.VariableNames))
+            % Calculate the TLCs
+                CurveLaneData=obj.CurveLaneDataTable;
+                [TLC_Left,TLC_Right]=obj.CalculateTLC(CurveLaneData,trajectorydata);
+                trajectorydata.TLC_Left=TLC_Left;
+                trajectorydata.TLC_Right=TLC_Right;
+            end
+            obj.TrajectoryDataTable=trajectorydata;
+            % data for update paramtrajectorydatabase
+            S.TrajectoryData=trajectorydata;
+            S.PlanningParam=obj.ParamEnterCurve;
+            ed_param_trajectory=OAS_EventData(S);
+            obj.notify('TrajectoryUpdated',ed_param_trajectory);
         end
-        function VehicleBaseLength=get.VehicleBaseLength(obj)
-            modelhandle=Simulink.findBlocks(obj.ModelHandle,'Name','Constant_VehicleBaseLength');
-            VehicleBaseLength=evalin('base',get_param(modelhandle,'Value'));  
-        end
-        function RoadWidth=get.RoadWidth(obj)
-            modelhandle=Simulink.findBlocks(obj.ModelHandle,'Name','Constant_RoadWidth');
-            RoadWidth=get_param(modelhandle,'Value');  
-        end        
-        function trajectorydatatable=get.TrajectoryDataTable(obj)
-            if ~isempty(obj.TrajectoryData)
-                trajectorydatatable=array2table(obj.TrajectoryData,'VariableNames',obj.TrajectoryVariableNames);
-            else
-                trajectorydatatable=table;
+        
+        function UpdateParamTrajectoryDataBase(obj,~,ed_param_trajectory) 
+            % update the param trajectory data base when the
+            % trajectory updated.
+            % ed_trajectoyrdata: the Data of it is a structure, with field
+            % name TrajectoryData, PlanningParam
+            
+            % check if the planning param has been stored in the database.
+            S=ed_param_trajectory.Data;
+            PlanningParamtable=S.PlanningParam;
+            TrajectoryData=S.TrajectoryData;
+            if ~isStored(PlanningParamtable)
+                tabletemp=table({PlanningParamtable},{obj.CurveLaneDataTable},{TrajectoryData},'VariableNames',{'PlanningParam'},{'CurveLaneData'},{'TrajectoryData'});
+                % call the OAS_System method to calculate the indicators
+                Indicators=OAS_DPM.Indicator_Calculate(TrajectoryData);
+                tabletemp.Indicators={Indicators};
+                obj.Param_TrajectoryDataBase=[obj.Param_TrajectoryDataBase;tabletemp];
             end
         end
-        function curvelanedatatable=get.CurveLaneDataTable(obj)
-            if ~isempty(obj.CurveLaneData)
-                curvelanedatatable=array2table(obj.CurveLaneData,'VariableNames',obj.CurveLaneVariableNames);
-            else
-                curvelanedatatable=table;
-            end
-        end
-     
+            
         function SetNextParam(obj,src,~)
             % src: OAS_Systemobj
            PlanningParam=src.SelectedNextParam;
            obj.UpdateParam(PlanningParam);
         end
+        
         function UpdateParam(obj,PlanningParam)
              PlanningParam_col=reshape(PlanningParam,[],1);
 %             set(obj.ParamSetHandle,'Value',num2str(PlanningParam_col));
@@ -188,7 +195,7 @@ classdef OAS_SimulinkModel < handle
             end
         end
         
-        function PlanningParam=GetParam(obj)
+        function PlanningParamTable=GetParam(obj)
             Beta1Block=Simulink.findBlocks(obj.ModelHandle,'Name','Beta_1');
             Beta1=str2double(get_param(Beta1Block,'Value'));
             Beta2Block=Simulink.findBlocks(obj.ModelHandle,'Name','Beta_2');
@@ -207,12 +214,49 @@ classdef OAS_SimulinkModel < handle
             Min_Speed=str2double(get_param(Min_SpeedBlock,'Value'));
             Max_SppedBlock=Simulink.findBlocks(obj.ModelHandle,'Name','Max_Speed');
             Max_Speed=str2double(get_param(Max_SppedBlock,'Value'));
-            PlanningParam=[Beta1;Beta2;Beta3;Beta4;Max_LateralAccel;Max_LongitudinalAccel;Max_LongitudinalDecel;Min_Speed;Max_Speed];
+%             PlanningParam=[Beta1;Beta2;Beta3;Beta4;Max_LateralAccel;Max_LongitudinalAccel;Max_LongitudinalDecel;Min_Speed;Max_Speed];
+            ParameterNames={'Beta_PathLength','Beta_Curvature','Beta_Centering','Beta_HeadingError',...
+                'LatAcceleration_UpperBound','LongidAcceleration_UpperBound','LongidDeceleration_UpperBound','Velocity_LowerBound','Velocity_UpperBound'};
+            PlanningParamTable=table(Beta1,Beta2,Beta3,Beta4,Max_LateralAccel,Max_LongitudinalAccel,Max_LongitudinalDecel,Min_Speed,Max_Speed,'VariableNames',ParameterNames);
+            
+        end       
+    end 
 
+    %===========get and set=================
+    methods
+        function set.OAS_SystemObj(obj,OAS_Systemobj)
+            obj.OAS_SystemObj=OAS_Systemobj;
+            % add listerner for the oas_system 
+            obj.OAS_SystemObj.addlistener('EvaluatedTrajectoryBufferUpdated',@obj.Update_EvaluatedPlanningParam);
+            obj.OAS_SystemObj.addlistener('NextParamSelected',@obj.SetNextParam);
         end
+        function VehicleWidth=get.VehicleWidth(obj)
+            modelhandle=Simulink.findBlocks(obj.ModelHandle,'Name','Constant_VehicleWidth');
+            VehicleWidth=get_param(modelhandle,'Value');  
+        end
+        function VehicleBaseLength=get.VehicleBaseLength(obj)
+            modelhandle=Simulink.findBlocks(obj.ModelHandle,'Name','Constant_VehicleBaseLength');
+            VehicleBaseLength=evalin('base',get_param(modelhandle,'Value'));  
+        end
+        function RoadWidth=get.RoadWidth(obj)
+            modelhandle=Simulink.findBlocks(obj.ModelHandle,'Name','Constant_RoadWidth');
+            RoadWidth=get_param(modelhandle,'Value');  
+        end        
+        function trajectorydatatable=get.TrajectoryDataTable(obj)
+            if ~isempty(obj.TrajectoryData)
+                trajectorydatatable=array2table(obj.TrajectoryData,'VariableNames',obj.TrajectoryVariableNames);
+            else
+                trajectorydatatable=table;
+            end
+        end
+        function curvelanedatatable=get.CurveLaneDataTable(obj)
+            if ~isempty(obj.CurveLaneData)
+                curvelanedatatable=array2table(obj.CurveLaneData,'VariableNames',obj.CurveLaneVariableNames);
+            else
+                curvelanedatatable=table;
+            end
+        end   
     end
-    
-    
 end
 
 %============= Local Functins==========
