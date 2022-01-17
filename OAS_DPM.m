@@ -78,6 +78,8 @@ classdef OAS_DPM < handle
             % Initialize the DEM and DPM and the AlternativeTable
             obj.DriverObj=DriverObj;
             obj.ID=['OAS_',obj.DriverObj.Name];
+            % add listener for driver event - DriverEvaluated
+            obj.addlistener('DriverEvaluated',@obj.Update_OAS);
 
             % register this driver object in the oas_handlemanager
             OAS_handlemanager=OAS_HandleManager.getInstance();
@@ -432,8 +434,8 @@ classdef OAS_DPM < handle
             % sequence of the vehicle state obtained from the simulink model.
             % Indicator_Varname: a cell array, each element is a indicator
             % name.
-            [Available_Ind,Available_IndName]=Indicator_Cal(TrajectoryTable); 
-            Indicators=Available_Ind(ismember(Available_IndName,Indicator_Varname));            
+            IndicatorTable=Indicator_Cal(TrajectoryTable); 
+            Indicators=IndicatorTable{:,Indicator_Varname};            
         end
         
         function PDF=GeneratePDF(Ndim,PDF_Type)
@@ -519,7 +521,7 @@ end
 
 % ===============Local functions=============
 % Calculate trajectory indicators
-function [trajectory_indicators,Available_IndicatorName]=Indicator_Cal(TrajectoryTable)
+function IndicatorsTable=Indicator_Cal(TrajectoryTable)
 % Trajectory is a Struct with field Varname and data arrya like Length_Sequence*Var_Num(default=12)
 % Trajectory_Indicators is a  column for each trajectory;
 % note: each time updated the available_IndicatorName, Update the
@@ -613,7 +615,7 @@ Available_EfficiencyVar={'Min_Speed','Mean_Speed'};
 
 trajectory_indicators=[Safety_Ind,Comfort_Ind,Efficiency_Ind];
 Available_IndicatorName=[Available_SafetyVar,Available_ComfortVar,Available_EfficiencyVar];
-
+IndicatorsTable=array2table(trajectory_indicators,'VariableNames',Available_IndicatorName);
 end
 
 function [NormalisedParam_IndBaseTable,IndicatorRange]=Generate_NormalisedParam_IndDataBase(Param_Indtable,JNDs)
