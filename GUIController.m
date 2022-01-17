@@ -6,12 +6,17 @@ classdef GUIController < handle
         OAS_Systemobj
         OAS_GUIobj
     end
+    
+    events
+
+    end
     %=====Constructor==========
     methods
         function obj = GUIController(OAS_GUIobj,OAS_Systemobj)
             % Constructor
             obj.OAS_GUIobj = OAS_GUIobj;
             obj.OAS_Systemobj=OAS_Systemobj;
+
             % register this driver object in the oas_handlemanager
             OAS_handlemanager=OAS_HandleManager.getInstance();
             OAS_handlemanager.register(obj.ID,obj);
@@ -148,15 +153,21 @@ classdef GUIController < handle
         end
         
         function callback_UpdateOASButton(obj,src,~)
-            % src: the update oas button object
-            Evaluation=obj.OAS_GUIobj.GetEvaluation();
             % call the oas system upodate_oas method
-            obj.OAS_Systemobj.Update_OAS(Evaluation) ;
+            Evaluation=obj.OAS_GUIobj.GetEvaluation();
+            obj.OAS_Systemobj.Update_OAS(Evaluation);
+            ed=OAS_EventData(Evaluation);
+            obj.OAS_Systemobj.Driverobj.notify('DriverEvaluated');
+            % src: the update oas button object
             src.Enable='off';
             % set the selectnext button on
             selectbutton=findobj(obj.OAS_GUIobj.SelectNextPanel,'Tag','SelectNextButton');
             selectbutton.Enable='on';
-        end   
+        end 
+        
+        function CallOASUpdate(obj,~,~)
+            
+        end
     end
     
     % select Next Panel

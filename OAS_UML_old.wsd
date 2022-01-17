@@ -1,0 +1,23 @@
+@startuml
+abstract class OAS_Driver 
+class  OAS_System
+class  OAS_RealDriver
+class  OAS_PlanTrackingModel
+class  OAS_GUI
+class  GUIController 
+
+OAS_RealDriver <|-- OAS_Driver
+OAS_System o-- OAS_RealDriver
+OAS_GUI o--  OAS_System
+OAS_PlanTrackingModel o-- OAS_System
+OAS_GUI *-- GUIController
+GUIController   o-- OAS_System
+
+
+
+
+
+
+
+
+@enduml

@@ -9,6 +9,10 @@ classdef OAS_Driver< handle
         LastPreference_Trajectory
     end
     
+    events
+        DriverEvaluated
+    end
+    
 %     methods
 %         function obj = OAS_Driver(inputArg1,inputArg2)
 %             %Constructor
@@ -19,7 +23,9 @@ classdef OAS_Driver< handle
 
     methods (Abstract)
             Evaluate(obj,Trajectory);
-
     end
+    
+    
+    
 end
 

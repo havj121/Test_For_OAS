@@ -18,14 +18,7 @@ classdef OAS_GUI < handle
         OAS_SystemObj
         Controllerobj
     end
-    
-    events
-        DriverEvaluated
-    
-    end
-    
-    
-    
+     
     methods
         function obj = OAS_GUI(OAS_SystemObj)
             %OAS_GUI Constructor
@@ -39,7 +32,7 @@ classdef OAS_GUI < handle
             obj.attachToController(obj.Controllerobj);
 
             % add listerner for the oas_SimulinkMOdelobj
-            obj.OAS_SystemObj.OAS_SimulinkModelobj.addlistener('EscapedCurve',@obj.UpdataCurrentTrajectory);
+            obj.OAS_SystemObj.addlistener('TrajectoryChanged',@obj.UpdataCurrentTrajectory);
             obj.OAS_SystemObj.addlistener('LastPreferenceChanged',@obj.UpdateLastTrajectory);
             % This one should be puted in the DEM & DPM view gui
             % obj.OAS_SystemObj.addlistener('DEMUpdated',@obj.UpdateDEMView);
@@ -76,8 +69,7 @@ classdef OAS_GUI < handle
             set(secondmaincollayout,'Sizes',[-1,-1,-1]); 
             
             set(mainlayout,'Sizes',[-3 -7]);
-        end
-        
+        end      
         function attachToOASSystem(obj)
             % Intialize the GUI with the data in the OAS Systemobj
             % the JND panel
@@ -93,8 +85,7 @@ classdef OAS_GUI < handle
             obj.Update_DEMPanel();
             % Perception variable selection
             obj.Intialize_PerceptionVarSelectPanel();
-        end
-        
+        end       
         function attachToController(obj,Controllerobj)
             % The SelectFile Panel
             panelobj=obj.SelectFilePanel;
@@ -177,9 +168,8 @@ classdef OAS_GUI < handle
         function UpdataCurrentTrajectory(obj,~,~)
             % call the oas sytem method to calculate the trajectory
             % indicators
-            % source: the OAS_Simulinkmodel obj;
+            % source: the OAS_system obj;
             % eventdata:a object with properties: Data,varname
-            obj.OAS_SystemObj.Update_CurrentTrajectory();
             Indicators=obj.OAS_SystemObj.CurrentTrajectoryInd;
             %a trajectory panel
             Indicator_row=reshape(Indicators,1,[]);
@@ -483,7 +473,10 @@ classdef OAS_GUI < handle
                     Evaluation.Result=instructionobj.String(instructionobj.Value);
                 otherwise
                     errordlg('No such evaluatio type','modal')
-            end            
+            end
+            % Evaluation Trajectory (or compare group)
+            
+            
         end
         function SelectCriteria=GetSelectCriteria(obj)
             selectnextpop=findobj(obj.SelectNextPanel,'Tag','SelectPop');
